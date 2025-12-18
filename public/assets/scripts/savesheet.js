@@ -1,23 +1,32 @@
 // ==============================
+// CONSTANTS
+// ==============================
+const LOCAL_STORAGE_KEY = "utopia_character_sheet_autosave";
+
+// ==============================
 // WAIT FOR DOM
 // ==============================
 document.addEventListener("DOMContentLoaded", () => {
     assignContextualIds();
-});
 
+    // 🔹 Auto-load from localStorage
+    const saved = loadFromLocalStorage();
+    if (saved) {
+        applyLoadedData(saved);
+    }
+});
 
 // ==============================
 // STRING SANITIZER
 // ==============================
 function sanitizeId(str) {
     return str
-        .normalize("NFD")                 // remove accents
+        .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-zA-Z0-9]+/g, "_")   // non-alphanum → _
+        .replace(/[^a-zA-Z0-9]+/g, "_")
         .replace(/^_+|_+$/g, "")
         .toLowerCase();
 }
-
 
 // ==============================
 // CONTEXT-AWARE ID ASSIGNMENT
@@ -35,12 +44,10 @@ function assignContextualIds() {
 
         let newId = null;
 
-        // 1️⃣ Use name attribute if available
         if (el.name) {
             newId = sanitizeId(el.name);
         }
 
-        // 2️⃣ Ensure uniqueness
         if (newId) {
             let uniqueId = newId;
             let counter = 1;
@@ -54,7 +61,6 @@ function assignContextualIds() {
             return;
         }
 
-        // 3️⃣ Fallback auto-generated ID
         let type = el.tagName.toLowerCase() === "input"
             ? el.type || "text"
             : el.tagName.toLowerCase();
@@ -67,11 +73,10 @@ function assignContextualIds() {
     console.log(`Contextual IDs assigned to ${elements.length} fields`);
 }
 
-
 // ==============================
-// SAVE DATA
+// COLLECT FORM DATA
 // ==============================
-function saveData() {
+function collectFormData() {
     const elements = document.querySelectorAll("input, select, textarea");
     const data = {};
 
@@ -88,13 +93,95 @@ function saveData() {
         }
     });
 
+    return data;
+}
+
+// ==============================
+// SAVE TO LOCAL STORAGE
+// ==============================
+function saveToLocalStorage(data) {
+    try {
+        localStorage.setItem(
+            LOCAL_STORAGE_KEY,
+            JSON.stringify(data)
+        );
+    } catch (e) {
+        console.warn("Failed to save to localStorage", e);
+    }
+}
+
+// ==============================
+// LOAD FROM LOCAL STORAGE
+// ==============================
+function loadFromLocalStorage() {
+    try {
+        const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch (e) {
+        console.warn("Failed to load from localStorage", e);
+        return null;
+    }
+}
+
+// ==============================
+// APPLY LOADED DATA
+// ==============================
+function applyLoadedData(data) {
+    Object.entries(data).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        if (el.type === "checkbox") {
+            // Backward compatibility
+            if (typeof value === "boolean") {
+                el.checked = value;
+                el.removeAttribute("data-race-granted");
+            } else {
+                el.checked = value.checked;
+                if (value.raceGranted) {
+                    el.dataset.raceGranted = "true";
+                } else {
+                    el.removeAttribute("data-race-granted");
+                }
+            }
+        } else {
+            el.value = value;
+        }
+    });
+
+    // 🔁 Force recalculations
+    document.getElementById("raca")
+        ?.dispatchEvent(new Event("change", { bubbles: true }));
+
+    [
+        "blockBonus",
+        "dodgeBonus",
+        "conBonus",
+        "effBonus",
+        "resBonus",
+    ].forEach(id =>
+        document.getElementById(id)
+            ?.dispatchEvent(new Event("input", { bubbles: true }))
+    );
+}
+
+// ==============================
+// SAVE DATA (JSON + LOCAL)
+// ==============================
+function saveData() {
+    const data = collectFormData();
+
+    // 🔹 save to localStorage
+    saveToLocalStorage(data);
+
+    // 🔹 save to file
     const json = JSON.stringify(data, null, 2);
     downloadJSON(json, "utopia_character_sheet.json");
 }
 
-
 // ==============================
-// LOAD DATA
+// LOAD DATA (FILE)
 // ==============================
 function loadData() {
     const fileInput = document.getElementById("fileInput");
@@ -109,47 +196,26 @@ function loadData() {
         reader.onload = e => {
             const data = JSON.parse(e.target.result);
 
-            Object.entries(data).forEach(([id, value]) => {
-                const el = document.getElementById(id);
-                if (!el) return;
+            applyLoadedData(data);
 
-                if (el.type === "checkbox") {
-        // Backward compatibility with old saves
-        if (typeof value === "boolean") {
-            el.checked = value;
-            el.removeAttribute("data-race-granted");
-        } else {
-            el.checked = value.checked;
-
-            if (value.raceGranted) {
-                el.dataset.raceGranted = "true";
-            } else {
-                el.removeAttribute("data-race-granted");
-            }
-        }
-                } else {
-                    el.value = value;
-                }
-            });
-
-            // Force recalculation after loading
-            document.getElementById("raca")?.dispatchEvent(new Event("change", { bubbles: true }));
-
-            [
-                "blockBonus",
-                "dodgeBonus",
-                "conBonus",
-                "effBonus",
-                "resBonus",
-            ].forEach(id => {
-            document.getElementById(id)?.dispatchEvent(new Event("input", { bubbles: true }));
-            });
+            // 🔹 also store in localStorage
+            saveToLocalStorage(data);
         };
 
         reader.readAsText(file);
     };
 }
 
+// ==============================
+// AUTO-SAVE ON CHANGE
+// ==============================
+document.addEventListener("input", () => {
+    saveToLocalStorage(collectFormData());
+});
+
+document.addEventListener("change", () => {
+    saveToLocalStorage(collectFormData());
+});
 
 // ==============================
 // HELPER: DOWNLOAD FILE
